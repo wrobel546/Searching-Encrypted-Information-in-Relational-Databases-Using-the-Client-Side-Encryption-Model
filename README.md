@@ -1,0 +1,1 @@
+# Searching-Encrypted-Information-in-Relational-Databases-Using-the-Client-Side-Encryption-Model

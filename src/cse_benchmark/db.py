@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import psycopg
 
@@ -12,3 +13,10 @@ def connect() -> psycopg.Connection:
         password=os.environ.get("PGPASSWORD", "cse_local"),
         connect_timeout=5,
     )
+
+
+def create_plaintext_schema(connection: psycopg.Connection) -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    sql_path = project_root / "sql" / "001_plaintext.sql"
+
+    connection.execute(sql_path.read_text(encoding="utf-8"))

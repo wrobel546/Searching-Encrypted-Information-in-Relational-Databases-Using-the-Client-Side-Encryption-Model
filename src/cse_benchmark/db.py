@@ -27,3 +27,10 @@ def create_encrypted_scan_schema(connection: psycopg.Connection) -> None:
     sql_path = project_root / "sql" / "002_encrypted_scan.sql"
 
     connection.execute(sql_path.read_text(encoding="utf-8"))
+
+
+def create_blind_index_schema(connection: psycopg.Connection) -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    sql_path = project_root / "sql" / "003_blind_index.sql"
+
+    connection.execute(sql_path.read_text(encoding="utf-8"))

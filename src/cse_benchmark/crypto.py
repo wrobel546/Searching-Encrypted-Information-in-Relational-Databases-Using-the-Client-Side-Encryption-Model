@@ -1,7 +1,9 @@
 import json
 import secrets
+import hmac
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from .normalization import normalize_surname
 
 KEY_SIZE = 32
 NONCE_SIZE = 12
@@ -56,3 +58,15 @@ def decrypt_field(payload: bytes, key: bytes, *, record_id: int, field_name: str
     plaintext = cipher.decrypt(nonce, ciphertext, aad)
 
     return plaintext.decode("utf-8")    
+
+
+def surname_token(value: str, index_key: bytes) -> bytes:
+    if len(index_key) != KEY_SIZE:
+        raise ValueError("Klucz indeksowania musi mieć dokładnie 32 bajty.")
+
+    normalized = normalize_surname(value)
+
+    context = ["cse-benchmark", "blind-index", 1, "surname", normalized,]
+
+    message = json.dumps(context, ensure_ascii=False, separators=(",", ":"),).encode("utf-8")
+    return hmac.digest(index_key, message, "sha256")

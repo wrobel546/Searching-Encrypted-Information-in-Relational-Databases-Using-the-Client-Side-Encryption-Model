@@ -101,3 +101,25 @@ def search_blind_index(connection: psycopg.Connection, surname: str, keys: KeySe
             )
 
     return results
+
+
+def update_blind_index_surname(connection: psycopg.Connection, record_id: int, new_surname: str, keys: KeySet,) -> bool:
+    _validation_keys(keys)
+
+    surname_payload = encrypt_field(new_surname, keys.encryption_key, record_id=record_id, field_name="surname",)
+    token = surname_token(new_surname, keys.index_key)
+
+    with connection.transaction():
+        cursor = connection.execute(
+            """
+            UPDATE contacts_blind_index
+            SET surname_ciphertext = %s,
+                surname_token = %s
+            WHERE id = %s
+            """,
+            (surname_payload, token, record_id),
+        )
+
+        updated = cursor.rowcount == 1
+
+    return updated

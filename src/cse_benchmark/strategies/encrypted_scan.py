@@ -92,3 +92,20 @@ def search_encrypted_scan(connection: psycopg.Connection, surname: str, encrypti
                             )
 
     return results 
+
+def update_encrypted_scan_surname(connection: psycopg.Connection, record_id: int, new_surname: str, encryption_key: bytes, ) -> bool:
+    surname_payload = encrypt_field(new_surname,encryption_key, record_id=record_id,field_name="surname",)
+
+    with connection.transaction():
+        cursor = connection.execute(
+            """
+            UPDATE contacts_encrypted_scan
+            SET surname_ciphertext = %s
+            WHERE id = %s
+            """,
+            (surname_payload, record_id),
+        )
+
+        updated = cursor.rowcount == 1
+
+    return updated

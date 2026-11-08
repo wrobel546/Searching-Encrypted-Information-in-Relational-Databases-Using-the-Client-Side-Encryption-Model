@@ -51,3 +51,23 @@ def search_plaintext(connection: psycopg.Connection, surname: str,) -> list[Cont
         Contact(id=row[0], surname=row[1], email=row[2])
         for row in rows
     ]
+
+
+def update_plaintext_surname(connection: psycopg.Connection, record_id: int, new_surname: str) -> bool:
+    normalized = normalize_surname(new_surname)
+    
+    with connection.transaction():
+        cursor = connection.execute(
+            """
+            UPDATE contacts_plaintext
+            SET surname = %s,
+                surname_normalized = %s
+            WHERE id = %s
+            """,
+            (new_surname, normalized, record_id),
+        )
+
+        updated = cursor.rowcount == 1
+
+
+    return updated

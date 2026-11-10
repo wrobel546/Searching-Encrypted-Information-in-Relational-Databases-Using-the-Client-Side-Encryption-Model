@@ -74,3 +74,40 @@ Testy kluczy, w tym odczytu po ponownym uruchomieniu Pythona:
 ```powershell
 python -m pytest tests/test_keys.py -v
 ```
+
+
+## Scenariusze danych benchmarku
+
+Generowanie:
+
+    python -m cse_benchmark generate-datasets
+
+Zbiory: 1 000, 10 000 i 100 000 rekordów.
+Dla każdego rozmiaru generowane są rozkłady uniform i skewed.
+Domyślny seed: 42. Wersja scenariuszy: 1.
+
+Generator rezerwuje jeden rekord dla UnikatowyTestowy i trzy
+rekordy dla RzadkiTestowy.
+
+W rozkładzie uniform pozostałe rekordy są dzielone możliwie
+równomiernie między dziesięć bazowych nazwisk.
+
+W rozkładzie skewed nazwisko Nowak otrzymuje połowę pozostałych
+rekordów, z zaokrągleniem w dół. Reszta jest dzielona możliwie
+równomiernie między pozostałe dziewięć nazwisk.
+
+Wspólne zapytania:
+- zero: NieobecnyTestowy;
+- one: UnikatowyTestowy;
+- few: RzadkiTestowy;
+- many: Nowak, z dodatkowymi spacjami i wielkimi literami.
+
+Każdy zbiór zawiera oczekiwane identyfikatory wyników.
+Manifest zawiera konfiguracje, liczebności wyników, wersję Pythona
+oraz sumy SHA-256 wygenerowanych plików.
+
+Strategie A, B i C należy porównywać na tych samych kontaktach
+i zapytaniach w obrębie scenariusza.
+
+Generowanie danych i sprawdzanie poprawności należy wykonywać
+poza pomiarem czasu wyszukiwania.

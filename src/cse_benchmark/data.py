@@ -23,6 +23,13 @@ BASE_SURNAMES = (
     "Woźniak",
 )
 
+QUERY_DEFINITIONS = (
+    ("zero", "NieobecnyTestowy"),
+    ("one", "UnikatowyTestowy"),
+    ("few", "RzadkiTestowy"),
+    ("many", "  NOWAK  "),
+)
+
 
 @dataclass
 class SearchQuery:
@@ -83,16 +90,9 @@ def generate_dataset(count: int = 1000,seed: int = 42,distribution: Distribution
         for index, surname in enumerate(surnames, start=1)
     ]
 
-    query_definitions = [
-        ("zero", "NieobecnyTestowy"),
-        ("one", "UnikatowyTestowy"),
-        ("few", "RzadkiTestowy"),
-        ("many", "  NOWAK  "),
-    ]
-
     queries = []
 
-    for category, surname in query_definitions:
+    for category, surname in QUERY_DEFINITIONS:
         normalized = normalize_surname(surname)
 
         expected_ids = [

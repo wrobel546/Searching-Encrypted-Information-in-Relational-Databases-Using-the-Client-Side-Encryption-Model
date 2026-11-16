@@ -111,3 +111,29 @@ i zapytaniach w obrębie scenariusza.
 
 Generowanie danych i sprawdzanie poprawności należy wykonywać
 poza pomiarem czasu wyszukiwania.
+
+
+## Benchmark wyszukiwania
+
+Najpierw wygeneruj scenariusze, a następnie uruchom benchmark:
+
+```powershell
+python -m cse_benchmark generate-datasets
+python -m cse_benchmark benchmark-search
+```
+
+Domyślnie wykonywane są 3 rozgrzewki i 30 zapisywanych
+powtórzeń dla każdej strategii i każdego zapytania.
+Pomiar obejmuje całe wywołanie funkcji wyszukiwania:
+normalizację, komunikację z bazą, pobranie danych,
+odszyfrowanie oraz weryfikację kandydatów wykonywaną
+wewnątrz strategii.
+
+Przygotowanie danych, kontrola oczekiwanych identyfikatorów
+i zapis CSV odbywają się poza mierzonym czasem.
+
+Benchmark korzysta z osobnego, tymczasowego schematu PostgreSQL.
+Podczas działania zapisuje plik `.partial.csv`. Po poprawnym
+zakończeniu zmienia go na docelowy plik CSV. Towarzyszący plik
+`.metadata.json` zawiera parametry serii, liczbę zapisanych
+wierszy i pole `completed`.

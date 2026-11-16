@@ -2,6 +2,7 @@ import csv
 import hashlib
 import json
 from collections import Counter
+from contextlib import nullcontext
 from itertools import count
 
 import pytest
@@ -213,6 +214,11 @@ def test_benchmark_writes_only_measured_repetitions(
         "build_search_functions",
         fake_build_search_functions,
     )
+    monkeypatch.setattr(
+        benchmark,
+        "isolated_benchmark_schema",
+        lambda connection: nullcontext("benchmark_test"),
+    )
 
     fake_connection = object()
     clock_values = count(start=0, step=10)
@@ -252,3 +258,97 @@ def test_benchmark_writes_only_measured_repetitions(
     assert {row["actual_count"] for row in rows} == {"1"}
     assert {row["elapsed_ns"] for row in rows} == {"10"}
     assert len({row["run_id"] for row in rows}) == 1
+
+    partial_path = output_path.with_name(
+        "results.partial.csv"
+    )
+    metadata_path = output_path.with_name(
+        "results.metadata.json"
+    )
+
+    assert result_path == output_path
+    assert output_path.exists()
+    assert not partial_path.exists()
+
+    metadata = json.loads(
+        metadata_path.read_text(encoding="utf-8")
+    )
+
+    assert metadata["completed"] is True
+    assert metadata["rows_written"] == 9
+    assert metadata["database_schema"] == "benchmark_test"
+
+
+def test_interrupted_benchmark_keeps_partial_results(
+    tmp_path,
+    monkeypatch,
+):
+    manifest_path, _, contact = write_single_scenario(tmp_path)
+    output_path = tmp_path / "interrupted.csv"
+    settings = BenchmarkSettings(
+        warmups=0,
+        repetitions=1,
+    )
+    keys = KeySet(
+        encryption_key=b"a" * 32,
+        index_key=b"b" * 32,
+    )
+
+    def fail_search(_surname):
+        raise RuntimeError("symulowane przerwanie")
+
+    monkeypatch.setattr(
+        benchmark,
+        "prepare_database",
+        lambda connection, dataset, received_keys: None,
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "build_search_functions",
+        lambda connection, received_keys, received_settings: {
+            "A_plaintext": lambda surname: [contact],
+            "B_encrypted_scan": fail_search,
+            "C_blind_index": lambda surname: [contact],
+        },
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "isolated_benchmark_schema",
+        lambda connection: nullcontext("benchmark_test"),
+    )
+
+    with pytest.raises(RuntimeError, match="symulowane przerwanie"):
+        run_search_benchmark(
+            connection=object(),
+            keys=keys,
+            manifest_path=manifest_path,
+            output_path=output_path,
+            settings=settings,
+            clock=count(start=0, step=10).__next__,
+        )
+
+    partial_path = output_path.with_name(
+        "interrupted.partial.csv"
+    )
+    metadata_path = output_path.with_name(
+        "interrupted.metadata.json"
+    )
+
+    assert not output_path.exists()
+    assert partial_path.exists()
+
+    with partial_path.open(
+        encoding="utf-8",
+        newline="",
+    ) as file:
+        rows = list(csv.DictReader(file))
+
+    assert len(rows) == 1
+    assert rows[0]["strategy"] == "A_plaintext"
+
+    metadata = json.loads(
+        metadata_path.read_text(encoding="utf-8")
+    )
+
+    assert metadata["completed"] is False
+    assert metadata["rows_written"] == 1

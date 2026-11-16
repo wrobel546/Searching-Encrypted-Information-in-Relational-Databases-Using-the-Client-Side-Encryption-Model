@@ -1,13 +1,17 @@
 import csv
 import hashlib
 import json
+import platform
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import psycopg
+from psycopg import sql
 
 from .data import SearchQuery, SyntheticDataset, load_dataset
 from .db import (
@@ -200,39 +204,72 @@ def prepare_database(
     dataset: SyntheticDataset,
     keys: KeySet,
 ) -> None:
-    create_plaintext_schema(connection)
-    create_encrypted_scan_schema(connection)
-    create_blind_index_schema(connection)
+    with connection.transaction():
+        create_plaintext_schema(connection)
+        create_encrypted_scan_schema(connection)
+        create_blind_index_schema(connection)
 
-    connection.execute(
-        """
-        TRUNCATE TABLE
-            contacts_plaintext,
-            contacts_encrypted_scan,
-            contacts_blind_index
-        """
-    )
+        connection.execute(
+            """
+            TRUNCATE TABLE
+                contacts_plaintext,
+                contacts_encrypted_scan,
+                contacts_blind_index
+            """
+        )
 
-    replace_plaintext_contacts(
-        connection,
-        dataset.contacts,
-    )
+        replace_plaintext_contacts(
+            connection,
+            dataset.contacts,
+        )
 
-    replace_encrypted_contacts(
-        connection,
-        dataset.contacts,
-        keys.encryption_key,
-    )
+        replace_encrypted_contacts(
+            connection,
+            dataset.contacts,
+            keys.encryption_key,
+        )
 
-    replace_blind_index_contacts(
-        connection,
-        dataset.contacts,
-        keys,
-    )
+        replace_blind_index_contacts(
+            connection,
+            dataset.contacts,
+            keys,
+        )
 
     connection.execute("ANALYZE contacts_plaintext")
     connection.execute("ANALYZE contacts_encrypted_scan")
     connection.execute("ANALYZE contacts_blind_index")
+
+
+@contextmanager
+def isolated_benchmark_schema(
+    connection: psycopg.Connection,
+):
+    schema_name = f"benchmark_{uuid4().hex}"
+
+    with connection.transaction():
+        connection.execute(
+            sql.SQL("CREATE SCHEMA {}").format(
+                sql.Identifier(schema_name)
+            )
+        )
+
+    connection.execute(
+        sql.SQL("SET search_path TO {}").format(
+            sql.Identifier(schema_name)
+        )
+    )
+
+    try:
+        yield schema_name
+    finally:
+        connection.execute("SET search_path TO public")
+
+        with connection.transaction():
+            connection.execute(
+                sql.SQL("DROP SCHEMA {} CASCADE").format(
+                    sql.Identifier(schema_name)
+                )
+            )
 
 
 def build_search_functions(
@@ -322,124 +359,198 @@ def run_search_benchmark(
             if scenario.name in selected_scenarios
         ]
 
+    run_id = uuid4().hex
+    partial_path = output_path.with_name(
+        f"{output_path.stem}.partial{output_path.suffix}"
+    )
+    metadata_path = output_path.with_name(
+        f"{output_path.stem}.metadata.json"
+    )
+
     output_path.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    run_id = uuid4().hex
+    existing_paths = [
+        path
+        for path in (output_path, partial_path, metadata_path)
+        if path.exists()
+    ]
 
-    with output_path.open(
-        "x",
-        encoding="utf-8",
-        newline="",
-    ) as output_file:
-        writer = csv.DictWriter(
-            output_file,
-            fieldnames=CSV_FIELDS,
+    if existing_paths:
+        raise FileExistsError(
+            "Plik benchmarku już istnieje: "
+            + ", ".join(str(path) for path in existing_paths)
         )
-        writer.writeheader()
 
-        for scenario in scenarios:
-            print(f"Scenariusz: {scenario.name}")
+    metadata = {
+        "run_id": run_id,
+        "started_at_utc": datetime.now(timezone.utc).isoformat(),
+        "completed": False,
+        "rows_written": 0,
+        "scenario_version": scenario_version,
+        "manifest": str(manifest_path),
+        "output": str(output_path),
+        "python_version": platform.python_version(),
+        "psycopg_version": psycopg.__version__,
+        "warmups": settings.warmups,
+        "repetitions": settings.repetitions,
+        "scan_batch_size": settings.scan_batch_size,
+        "selected_scenarios": (
+            sorted(selected_scenarios)
+            if selected_scenarios
+            else None
+        ),
+    }
 
-            dataset = load_verified_dataset(scenario)
+    def save_metadata() -> None:
+        metadata_path.write_text(
+            json.dumps(
+                metadata,
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
-            prepare_database(
-                connection,
-                dataset,
-                keys,
-            )
+    save_metadata()
 
-            search_functions = build_search_functions(
-                connection,
-                keys,
-                settings,
-            )
+    try:
+        with isolated_benchmark_schema(connection) as schema_name:
+            metadata["database_schema"] = schema_name
+            save_metadata()
 
-            strategy_names = list(search_functions)
-
-            for query in dataset.queries:
-                print(
-                    f"  Zapytanie: {query.category} "
-                    f"({len(query.expected_ids)} wyników)"
+            with partial_path.open(
+                "x",
+                encoding="utf-8",
+                newline="",
+            ) as output_file:
+                writer = csv.DictWriter(
+                    output_file,
+                    fieldnames=CSV_FIELDS,
                 )
+                writer.writeheader()
+                output_file.flush()
 
-                for warmup_number in range(settings.warmups):
-                    order = rotate_names(
-                        strategy_names,
-                        warmup_number,
+                for scenario in scenarios:
+                    print(f"Scenariusz: {scenario.name}")
+
+                    dataset = load_verified_dataset(scenario)
+
+                    prepare_database(
+                        connection,
+                        dataset,
+                        keys,
                     )
 
-                    for strategy_name in order:
-                        results = search_functions[strategy_name](
-                            query.surname
-                        )
-
-                        validate_results(
-                            strategy_name,
-                            query,
-                            results,
-                        )
-
-                for repetition in range(
-                    1,
-                    settings.repetitions + 1,
-                ):
-                    order = rotate_names(
-                        strategy_names,
-                        repetition - 1,
+                    search_functions = build_search_functions(
+                        connection,
+                        keys,
+                        settings,
                     )
 
-                    for strategy_name in order:
-                        search_function = search_functions[
-                            strategy_name
-                        ]
+                    strategy_names = list(search_functions)
 
-                        started_ns = clock()
-
-                        results = search_function(
-                            query.surname
+                    for query in dataset.queries:
+                        print(
+                            f"  Zapytanie: {query.category} "
+                            f"({len(query.expected_ids)} wyników)"
                         )
 
-                        elapsed_ns = clock() - started_ns
+                        for warmup_number in range(
+                            settings.warmups
+                        ):
+                            order = rotate_names(
+                                strategy_names,
+                                warmup_number,
+                            )
 
-                        actual_count = validate_results(
-                            strategy_name,
-                            query,
-                            results,
-                        )
+                            for strategy_name in order:
+                                results = search_functions[
+                                    strategy_name
+                                ](query.surname)
 
-                        writer.writerow(
-                            {
-                                "run_id": run_id,
-                                "scenario_version": (
-                                    scenario_version
-                                ),
-                                "scenario": scenario.name,
-                                "record_count": scenario.count,
-                                "distribution": (
-                                    scenario.distribution
-                                ),
-                                "seed": scenario.seed,
-                                "strategy": strategy_name,
-                                "query_category": (
-                                    query.category
-                                ),
-                                "query_value": query.surname,
-                                "expected_count": len(
-                                    query.expected_ids
-                                ),
-                                "actual_count": actual_count,
-                                "repetition": repetition,
-                                "warmups": settings.warmups,
-                                "scan_batch_size": (
-                                    settings.scan_batch_size
-                                ),
-                                "elapsed_ns": elapsed_ns,
-                            }
-                        )
+                                validate_results(
+                                    strategy_name,
+                                    query,
+                                    results,
+                                )
+                                del results
 
-            output_file.flush()
+                        for repetition in range(
+                            1,
+                            settings.repetitions + 1,
+                        ):
+                            order = rotate_names(
+                                strategy_names,
+                                repetition - 1,
+                            )
+
+                            for strategy_name in order:
+                                search_function = search_functions[
+                                    strategy_name
+                                ]
+
+                                started_ns = clock()
+
+                                results = search_function(
+                                    query.surname
+                                )
+
+                                elapsed_ns = clock() - started_ns
+
+                                actual_count = validate_results(
+                                    strategy_name,
+                                    query,
+                                    results,
+                                )
+
+                                writer.writerow(
+                                    {
+                                        "run_id": run_id,
+                                        "scenario_version": (
+                                            scenario_version
+                                        ),
+                                        "scenario": scenario.name,
+                                        "record_count": scenario.count,
+                                        "distribution": (
+                                            scenario.distribution
+                                        ),
+                                        "seed": scenario.seed,
+                                        "strategy": strategy_name,
+                                        "query_category": (
+                                            query.category
+                                        ),
+                                        "query_value": query.surname,
+                                        "expected_count": len(
+                                            query.expected_ids
+                                        ),
+                                        "actual_count": actual_count,
+                                        "repetition": repetition,
+                                        "warmups": settings.warmups,
+                                        "scan_batch_size": (
+                                            settings.scan_batch_size
+                                        ),
+                                        "elapsed_ns": elapsed_ns,
+                                    }
+                                )
+                                metadata["rows_written"] += 1
+                                del results
+
+                        output_file.flush()
+
+        partial_path.rename(output_path)
+        metadata["completed"] = True
+        metadata["finished_at_utc"] = datetime.now(
+            timezone.utc
+        ).isoformat()
+        save_metadata()
+    except BaseException:
+        metadata["finished_at_utc"] = datetime.now(
+            timezone.utc
+        ).isoformat()
+        save_metadata()
+        raise
 
     return output_path

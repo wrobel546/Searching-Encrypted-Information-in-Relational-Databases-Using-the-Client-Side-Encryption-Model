@@ -6,6 +6,7 @@ import pytest
 from cse_benchmark.data import (
     BASE_SURNAMES,
     generate_dataset,
+    load_dataset,
     save_dataset,
 )
 from cse_benchmark.normalization import normalize_surname
@@ -128,3 +129,18 @@ def test_rejects_too_small_dataset():
 def test_rejects_unknown_distribution():
     with pytest.raises(ValueError, match="Rozkład"):
         generate_dataset(distribution="unknown")
+
+
+def test_saved_dataset_can_be_loaded(tmp_path):
+    original = generate_dataset(
+        count=1000,
+        seed=42,
+        distribution="uniform",
+    )
+
+    path = tmp_path / "dataset.json"
+
+    save_dataset(original, path)
+    loaded = load_dataset(path)
+
+    assert loaded == original

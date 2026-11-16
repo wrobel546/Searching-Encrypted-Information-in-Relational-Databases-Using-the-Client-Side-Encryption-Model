@@ -67,14 +67,16 @@ def search_encrypted_scan(connection: psycopg.Connection, surname: str, encrypti
 
                 if not rows:
                     break
-                for record_id, surname_payload, email_payload in rows:
-                        original_surname = decrypt_field(
-                            surname_payload,
-                            encryption_key,
-                            record_id=record_id,
-                            field_name="surname",
-                        )
 
+                for record_id, surname_payload, email_payload in rows:
+                    original_surname = decrypt_field(
+                        surname_payload,
+                        encryption_key,
+                        record_id=record_id,
+                        field_name="surname",
+                    )
+
+                    if normalize_surname(original_surname) == normalized_query:
                         original_email = decrypt_field(
                             email_payload,
                             encryption_key,
@@ -82,16 +84,15 @@ def search_encrypted_scan(connection: psycopg.Connection, surname: str, encrypti
                             field_name="email",
                         )
 
-                        if normalize_surname(original_surname) == normalized_query:
-                            results.append(
-                                Contact(
-                                    id=record_id,
-                                    surname=original_surname,
-                                    email=original_email,
-                                )
+                        results.append(
+                            Contact(
+                                id=record_id,
+                                surname=original_surname,
+                                email=original_email,
                             )
+                        )
 
-    return results 
+    return results
 
 def update_encrypted_scan_surname(connection: psycopg.Connection, record_id: int, new_surname: str, encryption_key: bytes, ) -> bool:
     surname_payload = encrypt_field(new_surname,encryption_key, record_id=record_id,field_name="surname",)

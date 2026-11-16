@@ -127,3 +127,39 @@ def save_dataset(dataset: SyntheticDataset, path: Path) -> None:
     )
 
     path.write_text(content, encoding="utf-8")
+
+
+def load_dataset(path: Path) -> SyntheticDataset:
+    content = json.loads(path.read_text(encoding="utf-8"))
+
+    distribution = content["distribution"]
+
+    if distribution not in ("uniform", "skewed"):
+        raise ValueError(
+            "Rozkład musi mieć wartość 'uniform' lub 'skewed'."
+        )
+
+    contacts = [
+        Contact(
+            id=contact["id"],
+            surname=contact["surname"],
+            email=contact["email"],
+        )
+        for contact in content["contacts"]
+    ]
+
+    queries = [
+        SearchQuery(
+            category=query["category"],
+            surname=query["surname"],
+            expected_ids=query["expected_ids"],
+        )
+        for query in content["queries"]
+    ]
+
+    return SyntheticDataset(
+        seed=content["seed"],
+        distribution=distribution,
+        contacts=contacts,
+        queries=queries,
+    )
